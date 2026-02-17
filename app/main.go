@@ -4,8 +4,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log"
 	"os"
-	"io"
+
+	// "io"
 	"encoding/json"
 
 	"github.com/openai/openai-go/v3"
@@ -13,7 +15,15 @@ import (
 )
 
 type ReadFilePath struct {
-	FilePath string `json:"file_path"`
+	FilePath string `json:"filePath"`
+}
+
+func Read(filePath string) string {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return string(data)
 }
 
 func main() {
@@ -36,77 +46,73 @@ func main() {
 	}
 
 	client := openai.NewClient(option.WithAPIKey(apiKey), option.WithBaseURL(baseUrl))
-	resp, err := client.Chat.Completions.New(context.Background(),
-		openai.ChatCompletionNewParams{
-			Model: "anthropic/claude-haiku-4.5",
-			Messages: []openai.ChatCompletionMessageParamUnion{
-				{
-					OfUser: &openai.ChatCompletionUserMessageParam{
-						Content: openai.ChatCompletionUserMessageParamContentUnion{
-							OfString: openai.String(prompt),
-						},
+	var messages []openai.ChatCompletionMessageParamUnion
+	var tools []openai.ChatCompletionToolUnionParam
+
+	messages = append(messages, openai.ChatCompletionMessageParamUnion{
+		OfUser: &openai.ChatCompletionUserMessageParam{
+			Content: openai.ChatCompletionUserMessageParamContentUnion{
+				OfString: openai.String(prompt),
+			},
+		}})
+
+	tools = append(tools,
+		openai.ChatCompletionFunctionTool(openai.FunctionDefinitionParam{
+			Name:        "Read",
+			Description: openai.String("Read and return the contents of a file"),
+			Parameters: openai.FunctionParameters{
+				"type": "object",
+				"properties": map[string]any{
+					"filePath": map[string]any{
+						"type":        "string",
+						"description": "The path of the file to read",
 					},
 				},
 			},
-			Tools: []openai.ChatCompletionToolUnionParam{
-				openai.ChatCompletionFunctionTool(openai.FunctionDefinitionParam{
-					Name: "Read",
-					Description: openai.String("Read and return the contents of a file"),
-					Parameters: openai.FunctionParameters{
-						"type": "object",
-						"properties": map[string]any{
-							"file_path": map[string]any{
-								"type": "string",
-								"description": "The path of the file to read",
-							},
-						},
-						"required": []string{"file_path"},
-					},
-				}),
-			},
+		}),
+	)
+
+	resp, err := client.Chat.Completions.New(context.Background(),
+		openai.ChatCompletionNewParams{
+			Model:    "anthropic/claude-haiku-4.5",
+			Messages: messages,
+			Tools:    tools,
 		},
 	)
 
-	for _, choice := range resp.Choices {
-		if choice.Message.ToolCalls != nil {
-			for _, toolCall := range choice.Message.ToolCalls {
-				// fmt.Printf("Tool called: %s\n", toolCall.Function.Name)
-				// fmt.Printf("Tool arguments: %s\n", toolCall.Function.Arguments)
-				if toolCall.Function.Name == "Read" {
-					var filePath ReadFilePath
-					err := json.Unmarshal([]byte(toolCall.Function.Arguments), &filePath)
-					if err != nil {
-						fmt.Fprintf(os.Stderr, "error: %v\n", err)
-						os.Exit(1)
-					}
-
-					content, err := os.Open(filePath.FilePath)
-					if err != nil {
-						fmt.Fprintf(os.Stderr, "error: %v\n", err)
-					}
-
-					defer content.Close()
-
-					_, err = io.Copy(os.Stdout, content)
-					if err != nil {
-						fmt.Fprintf(os.Stderr, "error: %v\n", err)
-					}
-				}
-			}
-		}
-	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-	if len(resp.Choices) == 0 {
-		panic("No choices in response")
+
+	for len(resp.Choices[0].Message.ToolCalls) != 0 {
+		messages = append(messages, resp.Choices[0].Message.ToParam())
+
+		var filePath ReadFilePath
+		err := json.Unmarshal([]byte(resp.Choices[0].Message.ToolCalls[0].Function.Arguments), &filePath)
+
+		if err != nil {
+			log.Fatal(err)
+		}
+		messages = append(messages, openai.ChatCompletionMessageParamUnion{
+			OfTool: &openai.ChatCompletionToolMessageParam{
+				ToolCallID: resp.Choices[0].Message.ToolCalls[0].ID,
+				Content: openai.ChatCompletionToolMessageParamContentUnion{
+					OfString: openai.String(Read(filePath.FilePath))},
+			}})
+
+		resp, err = client.Chat.Completions.New(context.Background(),
+			openai.ChatCompletionNewParams{
+				Model:    "anthropic/claude-haiku-4.5",
+				Messages: messages,
+				Tools:    tools,
+			},
+		)
 	}
 
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
 	fmt.Fprintln(os.Stderr, "Logs from your program will appear here!")
 
-	// fmt.Print(resp)
 	// TODO: Uncomment the line below to pass the first stage
 	fmt.Print(resp.Choices[0].Message.Content)
 }
