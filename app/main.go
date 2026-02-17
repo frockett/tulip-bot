@@ -5,10 +5,16 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"io"
+	"encoding/json"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 )
+
+type ReadFilePath struct {
+	FilePath string `json:"file_path"`
+}
 
 func main() {
 	var prompt string
@@ -43,21 +49,6 @@ func main() {
 				},
 			},
 			Tools: []openai.ChatCompletionToolUnionParam{
-				// {"type": "function",
-				// 	"function": {
-				// 		"name": "Read",
-				// 		"description": "Read and return the contents of a file",
-				// 		"parameters": {
-				// 			"type": "object",
-				// 			"properties": {
-				// 				"file_path": {
-				// 					"type": "string",
-				// 					"description": "The path of the file to read"
-				// 				}
-				// 			}
-				// 		},
-				// 		"required": ["file_"]
-				// 	}}
 				openai.ChatCompletionFunctionTool(openai.FunctionDefinitionParam{
 					Name: "Read",
 					Description: openai.String("Read and return the contents of a file"),
@@ -75,6 +66,35 @@ func main() {
 			},
 		},
 	)
+
+	for _, choice := range resp.Choices {
+		if choice.Message.ToolCalls != nil {
+			for _, toolCall := range choice.Message.ToolCalls {
+				// fmt.Printf("Tool called: %s\n", toolCall.Function.Name)
+				// fmt.Printf("Tool arguments: %s\n", toolCall.Function.Arguments)
+				if toolCall.Function.Name == "Read" {
+					var filePath ReadFilePath
+					err := json.Unmarshal([]byte(toolCall.Function.Arguments), &filePath)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "error: %v\n", err)
+						os.Exit(1)
+					}
+
+					content, err := os.Open(filePath.FilePath)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "error: %v\n", err)
+					}
+
+					defer content.Close()
+
+					_, err = io.Copy(os.Stdout, content)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "error: %v\n", err)
+					}
+				}
+			}
+		}
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -86,6 +106,7 @@ func main() {
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
 	fmt.Fprintln(os.Stderr, "Logs from your program will appear here!")
 
+	// fmt.Print(resp)
 	// TODO: Uncomment the line below to pass the first stage
 	fmt.Print(resp.Choices[0].Message.Content)
 }
