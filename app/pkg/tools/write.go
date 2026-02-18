@@ -2,6 +2,7 @@ package tools
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 
 	"github.com/codecrafters-io/claude-code-starter-go/app/pkg/registry"
@@ -14,7 +15,7 @@ type WriteParams struct {
 
 func Write(filePath string, content string) (string, error) {
 	err := os.WriteFile(filePath, []byte(content), 0644)
-
+	fmt.Println("Writing to file:", filePath)
 	if err != nil {
 		return "", err
 	}

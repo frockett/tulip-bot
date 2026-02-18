@@ -59,7 +59,7 @@ func GetBuiltinToolDefinitions() []openai.ChatCompletionToolUnionParam {
 		}),
 		openai.ChatCompletionFunctionTool(openai.FunctionDefinitionParam{
 			Name:        "Bash",
-			Description: openai.String("Execute a shell command in a safe sandbox environment"),
+			Description: openai.String("Execute a shell command"),
 			Parameters: openai.FunctionParameters{
 				"type": "object",
 				"properties": map[string]any{

@@ -2,6 +2,7 @@ package tools
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 
 	"github.com/codecrafters-io/claude-code-starter-go/app/pkg/registry"
@@ -12,6 +13,7 @@ type ReadParams struct {
 }
 
 func Read(filePath string) (string, error) {
+	fmt.Println("Reading file:", filePath)
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return "", err

@@ -2,6 +2,7 @@ package tools
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 
 	"github.com/codecrafters-io/claude-code-starter-go/app/pkg/registry"
@@ -18,7 +19,9 @@ type ListFilesResponse struct {
 
 func ListFiles(directorypath string) (string, error) {
 	files, err := os.ReadDir(directorypath)
-
+	fmt.Println()
+	fmt.Println("==========================================================")
+	fmt.Println("Listing files in directory:", directorypath)
 	if err != nil {
 		return "", err
 	}
@@ -26,11 +29,14 @@ func ListFiles(directorypath string) (string, error) {
 	dirContents := make([]ListFilesResponse, len(files))
 
 	for _, entry := range files {
+		fmt.Println(entry.Name())
 		dirContents = append(dirContents, ListFilesResponse{
 			Name:  entry.Name(),
 			IsDir: entry.IsDir(),
 		})
 	}
+
+	fmt.Println("==========================================================")
 
 	jsonData, err := json.Marshal(dirContents)
 
