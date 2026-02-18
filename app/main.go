@@ -76,7 +76,7 @@ func main() {
 			//
 			if len(chunk.Choices) > 0 {
 
-				fmt.Fprintf(os.Stderr, "DEBUG: chunk content: %q\n", chunk.Choices[0].Delta.Content)
+				// fmt.Fprintf(os.Stderr, "DEBUG: chunk content: %q\n", chunk.Choices[0].Delta.Content)
 
 				// Manually accumulate content
 
@@ -95,7 +95,7 @@ func main() {
 
 			// Detect when a tool call finishes
 			if tool, ok := acc.JustFinishedToolCall(); ok {
-				// Track tool calls for later execution (after we add the assistant message)
+				// Track tool calls for later execution
 				toolCallsToExecute = append(toolCallsToExecute, map[string]any{
 					"id":   tool.ID,
 					"name": tool.Name,
@@ -142,12 +142,12 @@ func main() {
 			})
 		}
 
-		// Add assistant message FIRST (with content and tool calls)
+		// Add assistant message
 		messages = append(messages, openai.ChatCompletionMessageParamUnion{
 			OfAssistant: assistantMsg,
 		})
 
-		// THEN execute tools and add tool results
+		// Execute tools and add results
 		for _, toolCall := range toolCallsToExecute {
 			// fmt.Printf("Executing tool call: %s\n", toolCall["name"].(string))
 			toolName := toolCall["name"].(string)
@@ -177,9 +177,6 @@ func main() {
 						OfString: openai.String(result)},
 				}})
 		}
-
-		// Debug: Check final state
-		// fmt.Fprintf(os.Stderr, "[DEBUG] Final message count: %d\n", len(messages))
 
 		if len(toolCallsToExecute) == 0 {
 			fmt.Print(assistantContent)

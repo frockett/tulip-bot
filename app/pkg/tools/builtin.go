@@ -9,6 +9,7 @@ func RegisterBuiltinTools(reg *registry.Registry) {
 	RegisterReadTools(reg)
 	RegisterListFilesTools(reg)
 	RegisterWriteTools(reg)
+	RegisterBashTools(reg)
 }
 
 func GetBuiltinToolDefinitions() []openai.ChatCompletionToolUnionParam {
@@ -52,6 +53,19 @@ func GetBuiltinToolDefinitions() []openai.ChatCompletionToolUnionParam {
 					"directoryPath": map[string]any{
 						"type":        "string",
 						"description": "The path of the directory in which to list the files",
+					},
+				},
+			},
+		}),
+		openai.ChatCompletionFunctionTool(openai.FunctionDefinitionParam{
+			Name:        "Bash",
+			Description: openai.String("Execute a shell command in a safe sandbox environment"),
+			Parameters: openai.FunctionParameters{
+				"type": "object",
+				"properties": map[string]any{
+					"command": map[string]any{
+						"type":        "string",
+						"description": "The command to execute",
 					},
 				},
 			},
