@@ -4,27 +4,13 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
 	"os"
 
-	// "io"
-	"encoding/json"
-
+	"github.com/codecrafters-io/claude-code-starter-go/app/pkg/registry"
+	"github.com/codecrafters-io/claude-code-starter-go/app/pkg/tools"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 )
-
-type ReadFilePath struct {
-	FilePath string `json:"filePath"`
-}
-
-func Read(filePath string) string {
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return string(data)
-}
 
 func main() {
 	var prompt string
@@ -46,8 +32,12 @@ func main() {
 	}
 
 	client := openai.NewClient(option.WithAPIKey(apiKey), option.WithBaseURL(baseUrl))
+
+	reg := registry.New()
+	tools.RegisterBuiltinTools(reg)
+
 	var messages []openai.ChatCompletionMessageParamUnion
-	var tools []openai.ChatCompletionToolUnionParam
+	var toolsParams []openai.ChatCompletionToolUnionParam
 
 	messages = append(messages, openai.ChatCompletionMessageParamUnion{
 		OfUser: &openai.ChatCompletionUserMessageParam{
@@ -56,63 +46,151 @@ func main() {
 			},
 		}})
 
-	tools = append(tools,
-		openai.ChatCompletionFunctionTool(openai.FunctionDefinitionParam{
-			Name:        "Read",
-			Description: openai.String("Read and return the contents of a file"),
-			Parameters: openai.FunctionParameters{
-				"type": "object",
-				"properties": map[string]any{
-					"filePath": map[string]any{
-						"type":        "string",
-						"description": "The path of the file to read",
-					},
-				},
-			},
-		}),
-	)
+	toolsParams = tools.GetBuiltinToolDefinitions()
 
-	resp, err := client.Chat.Completions.New(context.Background(),
-		openai.ChatCompletionNewParams{
-			Model:    "anthropic/claude-haiku-4.5",
-			Messages: messages,
-			Tools:    tools,
-		},
-	)
-
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-
-	for len(resp.Choices[0].Message.ToolCalls) != 0 {
-		messages = append(messages, resp.Choices[0].Message.ToParam())
-
-		var filePath ReadFilePath
-		err := json.Unmarshal([]byte(resp.Choices[0].Message.ToolCalls[0].Function.Arguments), &filePath)
-
-		if err != nil {
-			log.Fatal(err)
-		}
-		messages = append(messages, openai.ChatCompletionMessageParamUnion{
-			OfTool: &openai.ChatCompletionToolMessageParam{
-				ToolCallID: resp.Choices[0].Message.ToolCalls[0].ID,
-				Content: openai.ChatCompletionToolMessageParamContentUnion{
-					OfString: openai.String(Read(filePath.FilePath))},
-			}})
-
-		resp, err = client.Chat.Completions.New(context.Background(),
-			openai.ChatCompletionNewParams{
-				Model:    "anthropic/claude-haiku-4.5",
-				Messages: messages,
-				Tools:    tools,
-			},
-		)
-	}
-
-	// You can use print statements as follows for debugging, they'll be visible when running tests.
 	fmt.Fprintln(os.Stderr, "Logs from your program will appear here!")
 
-	// TODO: Uncomment the line below to pass the first stage
-	fmt.Print(resp.Choices[0].Message.Content)
+	// Main conversation loop - handle streaming and tool calls
+	for {
+		stream := client.Chat.Completions.NewStreaming(context.Background(),
+			openai.ChatCompletionNewParams{
+				Model:    openai.ChatModel("anthropic/claude-haiku-4.5"),
+				Messages: messages,
+				Tools:    toolsParams,
+			},
+		)
+
+		acc := openai.ChatCompletionAccumulator{}
+		var assistantContent string
+		var toolCallsToExecute []map[string]any
+
+		// Process the stream
+		for stream.Next() {
+			chunk := stream.Current()
+			acc.AddChunk(chunk)
+
+			// Print streaming content as it arrives
+			// if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
+			// 	fmt.Print(chunk.Choices[0].Delta.Content)
+			// }
+			//
+			if len(chunk.Choices) > 0 {
+
+				fmt.Fprintf(os.Stderr, "DEBUG: chunk content: %q\n", chunk.Choices[0].Delta.Content)
+
+				// Manually accumulate content
+
+				if chunk.Choices[0].Delta.Content != "" {
+
+					assistantContent += chunk.Choices[0].Delta.Content
+
+				}
+
+			}
+
+			// Detect when content finishes
+			if content, ok := acc.JustFinishedContent(); ok {
+				assistantContent = content
+			}
+
+			// Detect when a tool call finishes
+			if tool, ok := acc.JustFinishedToolCall(); ok {
+				// Track tool calls for later execution (after we add the assistant message)
+				toolCallsToExecute = append(toolCallsToExecute, map[string]any{
+					"id":   tool.ID,
+					"name": tool.Name,
+					"args": tool.Arguments,
+				})
+			}
+		}
+
+		if stream.Err() != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", stream.Err())
+			os.Exit(1)
+		}
+
+		// // Debug: Check state before adding messages
+		// fmt.Fprintf(os.Stderr, "\n[DEBUG] Messages before assistant: %d\n", len(messages))
+		// fmt.Fprintf(os.Stderr, "[DEBUG] Tool calls to execute: %d\n", len(toolCallsToExecute))
+		// for i, tc := range toolCallsToExecute {
+		// 	fmt.Fprintf(os.Stderr, "[DEBUG] Tool call %d: ID=%s, Name=%s\n", i, tc["id"], tc["name"])
+		// }
+
+		// Build assistant message with tool calls
+		assistantMsg := &openai.ChatCompletionAssistantMessageParam{
+			Content: openai.ChatCompletionAssistantMessageParamContentUnion{
+				OfString: openai.String(assistantContent),
+			},
+		}
+
+		// Add tool calls to assistant message using extra fields
+		if len(toolCallsToExecute) > 0 {
+			// Format tool calls for the API structure
+			formattedToolCalls := []map[string]any{}
+			for _, tc := range toolCallsToExecute {
+				formattedToolCalls = append(formattedToolCalls, map[string]any{
+					"id":   tc["id"],
+					"type": "function",
+					"function": map[string]any{
+						"name":      tc["name"],
+						"arguments": tc["args"],
+					},
+				})
+			}
+			assistantMsg.SetExtraFields(map[string]any{
+				"tool_calls": formattedToolCalls,
+			})
+		}
+
+		// Add assistant message FIRST (with content and tool calls)
+		messages = append(messages, openai.ChatCompletionMessageParamUnion{
+			OfAssistant: assistantMsg,
+		})
+
+		// THEN execute tools and add tool results
+		for _, toolCall := range toolCallsToExecute {
+			// fmt.Printf("Executing tool call: %s\n", toolCall["name"].(string))
+			toolName := toolCall["name"].(string)
+			toolID := toolCall["id"].(string)
+			toolArgs := toolCall["args"].(string)
+
+			// Execute the tool
+			result, err := reg.Execute(toolName, toolArgs)
+
+			if err != nil {
+				// Handle error - add error result to messages
+				messages = append(messages, openai.ChatCompletionMessageParamUnion{
+					OfTool: &openai.ChatCompletionToolMessageParam{
+						ToolCallID: toolID,
+						Content: openai.ChatCompletionToolMessageParamContentUnion{
+							OfString: openai.String(fmt.Sprintf("Error: %v", err))},
+					}})
+				continue
+			}
+
+			// Add tool result to messages
+			// fmt.Fprintf(os.Stderr, "[DEBUG] Adding tool result for ID: %s\n", toolID)
+			messages = append(messages, openai.ChatCompletionMessageParamUnion{
+				OfTool: &openai.ChatCompletionToolMessageParam{
+					ToolCallID: toolID,
+					Content: openai.ChatCompletionToolMessageParamContentUnion{
+						OfString: openai.String(result)},
+				}})
+		}
+
+		// Debug: Check final state
+		// fmt.Fprintf(os.Stderr, "[DEBUG] Final message count: %d\n", len(messages))
+
+		if len(toolCallsToExecute) == 0 {
+			fmt.Print(assistantContent)
+		}
+
+		// If there were tool calls, continue the conversation
+		if len(toolCallsToExecute) > 0 {
+			continue
+		}
+
+		// No more tool calls, we're done
+		break
+	}
 }
